@@ -18,7 +18,8 @@ DOC_TYPE_ERR = """{}.append(3)
 """
 TYPE_ERR_MSG = '"Dict[<nothing>, <nothing>]" has no attribute "append"  [attr-defined]'
 
-TEST_LINE = 'test_plugin.py:279:8: error: "Request" has no attribute "id"'
+TEST_LINE = 'test_plugin.py:279:8:279:19: error: "Request" has no attribute "id"'
+TEST_LINE_WITHOUT_END = 'test_plugin.py:279:8: error: "Request" has no attribute "id"'
 TEST_LINE_WITHOUT_COL = "test_plugin.py:279: " 'error: "Request" has no attribute "id"'
 TEST_LINE_WITHOUT_LINE = "test_plugin.py: " 'error: "Request" has no attribute "id"'
 
@@ -65,14 +66,22 @@ def test_plugin(workspace, last_diagnostics_monkeypatch):
     diag = diags[0]
     assert diag["message"] == TYPE_ERR_MSG
     assert diag["range"]["start"] == {"line": 0, "character": 0}
-    assert diag["range"]["end"] == {"line": 0, "character": 1}
+    assert diag["range"]["end"] == {"line": 0, "character": 8}
 
 
 def test_parse_full_line(workspace):
     diag = plugin.parse_line(TEST_LINE)  # TODO parse a document here
     assert diag["message"] == '"Request" has no attribute "id"'
     assert diag["range"]["start"] == {"line": 278, "character": 7}
-    assert diag["range"]["end"] == {"line": 278, "character": 8}
+    assert diag["range"]["end"] == {"line": 278, "character": 18}
+
+
+def test_parse_line_without_end(workspace):
+    doc = Document(DOC_URI, workspace)
+    diag = plugin.parse_line(TEST_LINE_WITHOUT_END, doc)
+    assert diag["message"] == '"Request" has no attribute "id"'
+    assert diag["range"]["start"] == {"line": 278, "character": 7}
+    assert diag["range"]["end"] == {"line": 278, "character": 13}
 
 
 def test_parse_line_without_col(workspace):
@@ -95,7 +104,7 @@ def test_parse_line_without_line(workspace):
 def test_parse_line_with_context(monkeypatch, word, bounds, workspace):
     doc = Document(DOC_URI, workspace)
     monkeypatch.setattr(Document, "word_at_position", lambda *args: word)
-    diag = plugin.parse_line(TEST_LINE, doc)
+    diag = plugin.parse_line(TEST_LINE_WITHOUT_END, doc)
     assert diag["message"] == '"Request" has no attribute "id"'
     assert diag["range"]["start"] == {"line": 278, "character": bounds[0]}
     assert diag["range"]["end"] == {"line": 278, "character": bounds[1]}
@@ -226,7 +235,7 @@ def test_option_overrides_dmypy(last_diagnostics_monkeypatch, workspace):
         "--",
         "--python-executable",
         "/tmp/fake",
-        "--show-column-numbers",
+        "--show-error-end",
         document.path,
     ]
     m.assert_called_with(expected, capture_output=True, **windows_flag, encoding="utf-8")

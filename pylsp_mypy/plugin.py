@@ -30,7 +30,7 @@ from pylsp import hookimpl
 from pylsp.config.config import Config
 from pylsp.workspace import Document, Workspace
 
-line_pattern: str = r"((?:^[a-z]:)?[^:]+):(?:(\d+):)?(?:(\d+):)? (\w+): (.*)"
+line_pattern: str = r"((?:^[a-z]:)?[^:]+):(?:(\d+):)?(?:(\d+):)?(?:(\d+):)?(?:(\d+):)? (\w+): (.*)"
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
     """
     result = re.match(line_pattern, line)
     if result:
-        file_path, linenoStr, offsetStr, severity, msg = result.groups()
+        file_path, linenoStr, offsetStr, endlinenoStr, endoffsetStr, severity, msg = result.groups()
 
         if file_path != "<string>":  # live mode
             # results from other files can be included, but we cannot return
@@ -90,6 +90,8 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
 
         lineno = int(linenoStr or 1) - 1  # 0-based line number
         offset = int(offsetStr or 1) - 1  # 0-based offset
+        end_lineno = (int(endlinenoStr) - 1) if endlinenoStr else None
+        end_offset = (int(endoffsetStr) - 1) if endoffsetStr else None
         errno = 2
         if severity == "error":
             errno = 1
@@ -97,18 +99,17 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
             "source": "mypy",
             "range": {
                 "start": {"line": lineno, "character": offset},
-                # There may be a better solution, but mypy does not provide end
-                "end": {"line": lineno, "character": offset + 1},
+                "end": {"line": end_lineno or lineno, "character": end_offset},
             },
             "message": msg,
             "severity": errno,
         }
-        if document:
-            # although mypy does not provide the end of the affected range, we
-            # can make a good guess by highlighting the word that Mypy flagged
-            word = document.word_at_position(diag["range"]["start"])
-            if word:
-                diag["range"]["end"]["character"] = diag["range"]["start"]["character"] + len(word)
+        if diag["range"]["end"]["character"] is None:
+            diag["range"]["end"]["character"] = (
+                offset + len(word)
+                if (document and (word := document.word_at_position(diag["range"]["start"])))
+                else offset + 1
+            )
 
         return diag
     return None
@@ -229,7 +230,7 @@ def get_diagnostics(
     if dmypy:
         dmypy_status_file = settings.get("dmypy_status_file", ".dmypy.json")
 
-    args = ["--show-column-numbers"]
+    args = ["--show-error-end"]
 
     global tmpFile
     if live_mode and not is_saved:
