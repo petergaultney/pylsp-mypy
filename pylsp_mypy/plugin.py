@@ -105,11 +105,9 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
             "severity": errno,
         }
         if diag["range"]["end"]["character"] is None:
-            diag["range"]["end"]["character"] = (
-                offset + len(word)
-                if (document and (word := document.word_at_position(diag["range"]["start"])))
-                else offset + 1
-            )
+            if document:
+                word = document.word_at_position(diag["range"]["start"])
+                diag["range"]["end"]["character"] = offset + len(word) if word else offset + 1
 
         return diag
     return None
