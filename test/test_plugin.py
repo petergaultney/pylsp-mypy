@@ -66,14 +66,14 @@ def test_plugin(workspace, last_diagnostics_monkeypatch):
     diag = diags[0]
     assert diag["message"] == TYPE_ERR_MSG
     assert diag["range"]["start"] == {"line": 0, "character": 0}
-    assert diag["range"]["end"] == {"line": 0, "character": 8}
+    assert diag["range"]["end"] == {"line": 0, "character": 9}
 
 
 def test_parse_full_line(workspace):
     diag = plugin.parse_line(TEST_LINE)  # TODO parse a document here
     assert diag["message"] == '"Request" has no attribute "id"'
     assert diag["range"]["start"] == {"line": 278, "character": 7}
-    assert diag["range"]["end"] == {"line": 278, "character": 18}
+    assert diag["range"]["end"] == {"line": 278, "character": 19}
 
 
 def test_parse_line_without_end(workspace):

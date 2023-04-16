@@ -91,7 +91,7 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
         lineno = int(linenoStr or 1) - 1  # 0-based line number
         offset = int(offsetStr or 1) - 1  # 0-based offset
         end_lineno = (int(endlinenoStr) - 1) if endlinenoStr else None
-        end_offset = (int(endoffsetStr) - 1) if endoffsetStr else None
+        end_offset = (int(endoffsetStr)) if endoffsetStr else None
         errno = 2
         if severity == "error":
             errno = 1
