@@ -20,6 +20,9 @@ DOC_TYPE_ERR = """{}.append(3)
 TYPE_ERR_MSG = '"Dict[<nothing>, <nothing>]" has no attribute "append"'
 
 TEST_LINE = 'test_plugin.py:279:8:279:16: error: "Request" has no attribute "id"  [attr-defined]'
+TEST_LINE_NOTE = (
+    'test_plugin.py:124:1:129:77: note: Use "-> None" if function does not return a value'
+)
 
 windows_flag: Dict[str, int] = (
     {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}  # type: ignore
@@ -80,6 +83,15 @@ def test_parse_full_line(workspace):
     assert diag["range"]["end"] == {"line": 278, "character": 16}
     assert diag["severity"] == 1
     assert diag["code"] == "attr-defined"
+
+
+def test_parse_note_line(workspace):
+    diag = plugin.parse_line(TEST_LINE_NOTE)
+    assert diag["message"] == 'Use "-> None" if function does not return a value'
+    assert diag["range"]["start"] == {"line": 123, "character": 0}
+    assert diag["range"]["end"] == {"line": 128, "character": 77}
+    assert diag["severity"] == 3
+    assert diag["code"] == None
 
 
 def test_multiple_workspaces(tmpdir, last_diagnostics_monkeypatch):
