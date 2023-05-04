@@ -31,7 +31,10 @@ from pylsp.config.config import Config
 from pylsp.workspace import Document, Workspace
 
 line_pattern = re.compile(
-    r"^(?P<file>.+):(?P<start_line>\d+):(?P<start_col>\d*):(?P<end_line>\d*):(?P<end_col>\d*): (?P<severity>\w+): (?P<message>.+?)(?: +\[(?P<code>.+)\])?$"
+    (
+        r"^(?P<file>.+):(?P<start_line>\d+):(?P<start_col>\d*):(?P<end_line>\d*):(?P<end_col>\d*): "
+        r"(?P<severity>\w+): (?P<message>.+?)(?: +\[(?P<code>.+)\])?$"
+    )
 )
 
 log = logging.getLogger(__name__)

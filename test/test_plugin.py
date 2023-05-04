@@ -91,7 +91,7 @@ def test_parse_note_line(workspace):
     assert diag["range"]["start"] == {"line": 123, "character": 0}
     assert diag["range"]["end"] == {"line": 128, "character": 77}
     assert diag["severity"] == 3
-    assert diag["code"] == None
+    assert diag["code"] is None
 
 
 def test_multiple_workspaces(tmpdir, last_diagnostics_monkeypatch):
