@@ -22,7 +22,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import IO, Any, Dict, List, Optional
 
-import toml
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 from mypy import api as mypy_api
 from pylsp import hookimpl
 from pylsp.config.config import Config
@@ -34,6 +38,8 @@ log = logging.getLogger(__name__)
 
 # A mapping from workspace path to config file path
 mypyConfigFileMap: Dict[str, Optional[str]] = {}
+
+settingsCache: Dict[str, Dict[str, Any]] = {}
 
 tmpFile: Optional[IO[str]] = None
 
@@ -122,6 +128,20 @@ def apply_overrides(args: List[str], overrides: List[Any]) -> List[str]:
     return overrides[: -(len(rest) + 1)] + args + rest
 
 
+def didSettingsChange(workspace: str, settings: Dict[str, Any]) -> None:
+    """Handle relevant changes to the settings between runs."""
+    configSubPaths = settings.get("config_sub_paths", [])
+    if settingsCache[workspace].get("config_sub_paths", []) != configSubPaths:
+        mypyConfigFile = findConfigFile(
+            workspace,
+            configSubPaths,
+            ["mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"],
+            True,
+        )
+        mypyConfigFileMap[workspace] = mypyConfigFile
+        settingsCache[workspace] = settings.copy()
+
+
 @hookimpl
 def pylsp_lint(
     config: Config, workspace: Workspace, document: Document, is_saved: bool
@@ -159,11 +179,13 @@ def pylsp_lint(
         if settings == {}:
             settings = oldSettings2
 
+    didSettingsChange(workspace.root_path, settings)
+
     if settings.get("report_progress", False):
         with workspace.report_progress("lint: mypy"):
-            return get_diagnostics(config, workspace, document, settings, is_saved)
+            return get_diagnostics(workspace, document, settings, is_saved)
     else:
-        return get_diagnostics(config, workspace, document, settings, is_saved)
+        return get_diagnostics(workspace, document, settings, is_saved)
 
 
 @lru_cache(maxsize=2000)
@@ -184,7 +206,6 @@ def get_venv_cmd(path: str, workspace: str) -> List[str]:
 
 
 def get_diagnostics(
-    config: Config,
     workspace: Workspace,
     document: Document,
     settings: Dict[str, Any],
@@ -195,8 +216,6 @@ def get_diagnostics(
 
     Parameters
     ----------
-    config : Config
-        The pylsp config.
     workspace : Workspace
         The pylsp workspace.
     document : Document
@@ -234,9 +253,9 @@ def get_diagnostics(
     global tmpFile
     if live_mode and not is_saved:
         if tmpFile:
-            tmpFile = open(tmpFile.name, "w")
+            tmpFile = open(tmpFile.name, "w", encoding="utf-8")
         else:
-            tmpFile = tempfile.NamedTemporaryFile("w", delete=False)
+            tmpFile = tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8")
         log.info("live_mode tmpFile = %s", tmpFile.name)
         tmpFile.write(document.source)
         tmpFile.close()
@@ -422,7 +441,8 @@ def init(workspace: str) -> Dict[str, str]:
     )
     if path:
         if "pyproject.toml" in path:
-            configuration = toml.load(path).get("tool").get("pylsp-mypy")
+            with open(path, "rb") as file:
+                configuration = tomllib.load(file).get("tool").get("pylsp-mypy")
         else:
             with open(path) as file:
                 configuration = ast.literal_eval(file.read())
@@ -432,6 +452,7 @@ def init(workspace: str) -> Dict[str, str]:
         workspace, configSubPaths, ["mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"], True
     )
     mypyConfigFileMap[workspace] = mypyConfigFile
+    settingsCache[workspace] = configuration.copy()
 
     log.info("mypyConfigFile = %s configuration = %s", mypyConfigFile, configuration)
     return configuration
@@ -476,10 +497,13 @@ def findConfigFile(
                             "instead."
                         )
                     if file.name == "pyproject.toml":
-                        configPresent = (
-                            toml.load(file).get("tool", {}).get("mypy" if mypy else "pylsp-mypy")
-                            is not None
-                        )
+                        with open(file, "rb") as fileO:
+                            configPresent = (
+                                tomllib.load(fileO)
+                                .get("tool", {})
+                                .get("mypy" if mypy else "pylsp-mypy")
+                                is not None
+                            )
                         if not configPresent:
                             continue
                     if file.name == "setup.cfg":
