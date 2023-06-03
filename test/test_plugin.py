@@ -1,6 +1,7 @@
 import collections
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict
 from unittest.mock import Mock
@@ -16,11 +17,12 @@ from pylsp_mypy import plugin
 DOC_URI = f"file:/{Path(__file__)}"
 DOC_TYPE_ERR = """{}.append(3)
 """
-TYPE_ERR_MSG = '"Dict[<nothing>, <nothing>]" has no attribute "append"  [attr-defined]'
+TYPE_ERR_MSG = '"Dict[<nothing>, <nothing>]" has no attribute "append"'
 
-TEST_LINE = 'test_plugin.py:279:8: error: "Request" has no attribute "id"'
-TEST_LINE_WITHOUT_COL = "test_plugin.py:279: " 'error: "Request" has no attribute "id"'
-TEST_LINE_WITHOUT_LINE = "test_plugin.py: " 'error: "Request" has no attribute "id"'
+TEST_LINE = 'test_plugin.py:279:8:279:16: error: "Request" has no attribute "id"  [attr-defined]'
+TEST_LINE_NOTE = (
+    'test_plugin.py:124:1:129:77: note: Use "-> None" if function does not return a value'
+)
 
 windows_flag: Dict[str, int] = (
     {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}  # type: ignore
@@ -65,40 +67,31 @@ def test_plugin(workspace, last_diagnostics_monkeypatch):
     diag = diags[0]
     assert diag["message"] == TYPE_ERR_MSG
     assert diag["range"]["start"] == {"line": 0, "character": 0}
-    assert diag["range"]["end"] == {"line": 0, "character": 1}
+    # Running mypy in 3.7 produces wrong error ends this can be removed when 3.7 reaches EOL
+    if sys.version_info < (3, 8):
+        assert diag["range"]["end"] == {"line": 0, "character": 1}
+    else:
+        assert diag["range"]["end"] == {"line": 0, "character": 9}
+    assert diag["severity"] == 1
+    assert diag["code"] == "attr-defined"
 
 
 def test_parse_full_line(workspace):
     diag = plugin.parse_line(TEST_LINE)  # TODO parse a document here
     assert diag["message"] == '"Request" has no attribute "id"'
     assert diag["range"]["start"] == {"line": 278, "character": 7}
-    assert diag["range"]["end"] == {"line": 278, "character": 8}
+    assert diag["range"]["end"] == {"line": 278, "character": 16}
+    assert diag["severity"] == 1
+    assert diag["code"] == "attr-defined"
 
 
-def test_parse_line_without_col(workspace):
-    doc = Document(DOC_URI, workspace)
-    diag = plugin.parse_line(TEST_LINE_WITHOUT_COL, doc)
-    assert diag["message"] == '"Request" has no attribute "id"'
-    assert diag["range"]["start"] == {"line": 278, "character": 0}
-    assert diag["range"]["end"] == {"line": 278, "character": 1}
-
-
-def test_parse_line_without_line(workspace):
-    doc = Document(DOC_URI, workspace)
-    diag = plugin.parse_line(TEST_LINE_WITHOUT_LINE, doc)
-    assert diag["message"] == '"Request" has no attribute "id"'
-    assert diag["range"]["start"] == {"line": 0, "character": 0}
-    assert diag["range"]["end"] == {"line": 0, "character": 6}
-
-
-@pytest.mark.parametrize("word,bounds", [("", (7, 8)), ("my_var", (7, 13))])
-def test_parse_line_with_context(monkeypatch, word, bounds, workspace):
-    doc = Document(DOC_URI, workspace)
-    monkeypatch.setattr(Document, "word_at_position", lambda *args: word)
-    diag = plugin.parse_line(TEST_LINE, doc)
-    assert diag["message"] == '"Request" has no attribute "id"'
-    assert diag["range"]["start"] == {"line": 278, "character": bounds[0]}
-    assert diag["range"]["end"] == {"line": 278, "character": bounds[1]}
+def test_parse_note_line(workspace):
+    diag = plugin.parse_line(TEST_LINE_NOTE)
+    assert diag["message"] == 'Use "-> None" if function does not return a value'
+    assert diag["range"]["start"] == {"line": 123, "character": 0}
+    assert diag["range"]["end"] == {"line": 128, "character": 77}
+    assert diag["severity"] == 3
+    assert diag["code"] is None
 
 
 def test_multiple_workspaces(tmpdir, last_diagnostics_monkeypatch):
@@ -107,7 +100,7 @@ def foo():
     return
     unreachable = 1
 """
-    DOC_ERR_MSG = "Statement is unreachable  [unreachable]"
+    DOC_ERR_MSG = "Statement is unreachable"
 
     # Initialize two workspace folders.
     folder1 = tmpdir.mkdir("folder1")
@@ -132,6 +125,7 @@ def foo():
     assert len(diags) == 1
     diag = diags[0]
     assert diag["message"] == DOC_ERR_MSG
+    assert diag["code"] == "unreachable"
 
     # Test document in workspace 2 (without mypy.ini configuration)
     doc2 = Document(DOC_URI, ws2, DOC_SOURCE)
@@ -226,7 +220,8 @@ def test_option_overrides_dmypy(last_diagnostics_monkeypatch, workspace):
         "--",
         "--python-executable",
         "/tmp/fake",
-        "--show-column-numbers",
+        "--show-error-end",
+        "--no-error-summary",
         document.path,
     ]
     m.assert_called_with(expected, capture_output=True, **windows_flag, encoding="utf-8")
@@ -270,7 +265,7 @@ def foo():
     return
     unreachable = 1
 """
-    DOC_ERR_MSG = "Statement is unreachable  [unreachable]"
+    DOC_ERR_MSG = "Statement is unreachable"
 
     config_sub_paths = [".config"]
 
@@ -296,6 +291,7 @@ def foo():
     assert len(diags) == 1
     diag = diags[0]
     assert diag["message"] == DOC_ERR_MSG
+    assert diag["code"] == "unreachable"
 
 
 def test_config_sub_paths_config_changed(tmpdir, last_diagnostics_monkeypatch):
@@ -304,7 +300,7 @@ def foo():
     return
     unreachable = 1
 """
-    DOC_ERR_MSG = "Statement is unreachable  [unreachable]"
+    DOC_ERR_MSG = "Statement is unreachable"
 
     # Create configuration file for workspace.
     config_dir = tmpdir.mkdir(".config")
@@ -327,3 +323,4 @@ def foo():
     assert len(diags) == 1
     diag = diags[0]
     assert diag["message"] == DOC_ERR_MSG
+    assert diag["code"] == "unreachable"

@@ -30,7 +30,12 @@ from pylsp import hookimpl
 from pylsp.config.config import Config
 from pylsp.workspace import Document, Workspace
 
-line_pattern: str = r"((?:^[a-z]:)?[^:]+):(?:(\d+):)?(?:(\d+):)? (\w+): (.*)"
+line_pattern = re.compile(
+    (
+        r"^(?P<file>.+):(?P<start_line>\d+):(?P<start_col>\d*):(?P<end_line>\d*):(?P<end_col>\d*): "
+        r"(?P<severity>\w+): (?P<message>.+?)(?: +\[(?P<code>.+)\])?$"
+    )
+)
 
 log = logging.getLogger(__name__)
 
@@ -77,41 +82,38 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
         The dict with the lint data.
 
     """
-    result = re.match(line_pattern, line)
-    if result:
-        file_path, linenoStr, offsetStr, severity, msg = result.groups()
+    result = line_pattern.match(line)
+    if not result:
+        return None
 
-        if file_path != "<string>":  # live mode
-            # results from other files can be included, but we cannot return
-            # them.
-            if document and document.path and not document.path.endswith(file_path):
-                log.warning("discarding result for %s against %s", file_path, document.path)
-                return None
+    file_path = result["file"]
+    if file_path != "<string>":  # live mode
+        # results from other files can be included, but we cannot return
+        # them.
+        if document and document.path and not document.path.endswith(file_path):
+            log.warning("discarding result for %s against %s", file_path, document.path)
+            return None
 
-        lineno = int(linenoStr or 1) - 1  # 0-based line number
-        offset = int(offsetStr or 1) - 1  # 0-based offset
-        errno = 2
-        if severity == "error":
-            errno = 1
-        diag: Dict[str, Any] = {
-            "source": "mypy",
-            "range": {
-                "start": {"line": lineno, "character": offset},
-                # There may be a better solution, but mypy does not provide end
-                "end": {"line": lineno, "character": offset + 1},
-            },
-            "message": msg,
-            "severity": errno,
-        }
-        if document:
-            # although mypy does not provide the end of the affected range, we
-            # can make a good guess by highlighting the word that Mypy flagged
-            word = document.word_at_position(diag["range"]["start"])
-            if word:
-                diag["range"]["end"]["character"] = diag["range"]["start"]["character"] + len(word)
+    lineno = int(result["start_line"]) - 1  # 0-based line number
+    offset = int(result["start_col"]) - 1  # 0-based offset
+    end_lineno = int(result["end_line"]) - 1
+    end_offset = int(result["end_col"])  # end is exclusive
 
-        return diag
-    return None
+    severity = result["severity"]
+    if severity not in ("error", "note"):
+        log.warning(f"invalid error severity '{severity}'")
+    errno = 1 if severity == "error" else 3
+
+    return {
+        "source": "mypy",
+        "range": {
+            "start": {"line": lineno, "character": offset},
+            "end": {"line": end_lineno, "character": end_offset},
+        },
+        "message": result["message"],
+        "severity": errno,
+        "code": result["code"],
+    }
 
 
 def apply_overrides(args: List[str], overrides: List[Any]) -> List[str]:
@@ -229,7 +231,7 @@ def get_diagnostics(
     if dmypy:
         dmypy_status_file = settings.get("dmypy_status_file", ".dmypy.json")
 
-    args = ["--show-column-numbers"]
+    args = ["--show-error-end", "--no-error-summary"]
 
     global tmpFile
     if live_mode and not is_saved:
