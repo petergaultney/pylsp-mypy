@@ -7,6 +7,7 @@ from typing import Dict
 from unittest.mock import Mock
 
 import pytest
+from mypy import api as mypy_api
 from pylsp import _utils, uris
 from pylsp.config.config import Config
 from pylsp.workspace import Document, Workspace
@@ -249,14 +250,17 @@ def test_dmypy_status_file(tmpdir, last_diagnostics_monkeypatch, workspace):
 
     assert not statusFile.exists()
 
-    plugin.pylsp_lint(
-        config=config,
-        workspace=workspace,
-        document=document,
-        is_saved=False,
-    )
+    try:
+        plugin.pylsp_lint(
+            config=config,
+            workspace=workspace,
+            document=document,
+            is_saved=False,
+        )
 
-    assert statusFile.exists()
+        assert statusFile.exists()
+    finally:
+        mypy_api.run_dmypy(["--status-file", str(statusFile), "stop"])
 
 
 def test_config_sub_paths(tmpdir, last_diagnostics_monkeypatch):
