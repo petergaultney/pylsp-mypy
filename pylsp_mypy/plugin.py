@@ -142,6 +142,21 @@ def didSettingsChange(workspace: str, settings: Dict[str, Any]) -> None:
         settingsCache[workspace] = settings.copy()
 
 
+def match_exclude_patterns(document_path: str, exclude_patterns: list) -> bool:
+    """Check if the current document path matches any of the configures exlude patterns."""
+    document_path = document_path.replace(os.sep, "/")
+
+    for pattern in exclude_patterns:
+        try:
+            if re.search(pattern, document_path):
+                log.debug(f"{document_path} matches " f"exclude pattern '{pattern}'")
+                return True
+        except re.error as e:
+            log.error(f"pattern {pattern} is not a valid regular expression: {e}")
+
+    return False
+
+
 @hookimpl
 def pylsp_lint(
     config: Config, workspace: Workspace, document: Document, is_saved: bool
@@ -180,6 +195,18 @@ def pylsp_lint(
             settings = oldSettings2
 
     didSettingsChange(workspace.root_path, settings)
+
+    # Running mypy with a single file (document) ignores any exclude pattern
+    # configured with mypy. We can now add our own exclude section like so:
+    # [tool.pylsp-mypy]
+    # exclude = ["tests/*"]
+    exclude_patterns = settings.get("exclude", [])
+
+    if match_exclude_patterns(document_path=document.path, exclude_patterns=exclude_patterns):
+        log.debug(
+            f"Not running because {document.path} matches " f"exclude patterns '{exclude_patterns}'"
+        )
+        return []
 
     if settings.get("report_progress", False):
         with workspace.report_progress("lint: mypy"):
