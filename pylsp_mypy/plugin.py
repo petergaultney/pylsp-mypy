@@ -37,6 +37,13 @@ line_pattern = re.compile(
     )
 )
 
+whole_line_pattern = re.compile(  # certain mypy warnings do not report start-end ranges
+    (
+        r"^(?P<file>.+):(?P<start_line>\d+): "
+        r"(?P<severity>\w+): (?P<message>.+?)(?: +\[(?P<code>.+)\])?$"
+    )
+)
+
 log = logging.getLogger(__name__)
 
 # A mapping from workspace path to config file path
@@ -82,7 +89,8 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
         The dict with the lint data.
 
     """
-    result = line_pattern.match(line)
+    result = line_pattern.match(line) or whole_line_pattern.match(line)
+
     if not result:
         return None
 
@@ -95,9 +103,9 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
             return None
 
     lineno = int(result["start_line"]) - 1  # 0-based line number
-    offset = int(result["start_col"]) - 1  # 0-based offset
-    end_lineno = int(result["end_line"]) - 1
-    end_offset = int(result["end_col"])  # end is exclusive
+    offset = int(result.groupdict().get("start_col", 1)) - 1  # 0-based offset
+    end_lineno = int(result.groupdict().get("end_line", lineno + 1)) - 1
+    end_offset = int(result.groupdict().get("end_col", 1))  # end is exclusive
 
     severity = result["severity"]
     if severity not in ("error", "note"):
