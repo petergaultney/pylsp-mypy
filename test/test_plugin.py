@@ -196,13 +196,15 @@ def test_option_overrides_dmypy(last_diagnostics_monkeypatch, workspace):
     last_diagnostics_monkeypatch.setattr(
         FakeConfig,
         "plugin_settings",
-        lambda _, p: {
-            "overrides": overrides,
-            "dmypy": True,
-            "live_mode": False,
-        }
-        if p == "pylsp_mypy"
-        else {},
+        lambda _, p: (
+            {
+                "overrides": overrides,
+                "dmypy": True,
+                "live_mode": False,
+            }
+            if p == "pylsp_mypy"
+            else {}
+        ),
     )
 
     m = Mock(wraps=lambda a, **_: Mock(returncode=0, **{"stdout": ""}))
@@ -240,13 +242,15 @@ def test_dmypy_status_file(tmpdir, last_diagnostics_monkeypatch, workspace):
     last_diagnostics_monkeypatch.setattr(
         FakeConfig,
         "plugin_settings",
-        lambda _, p: {
-            "dmypy": True,
-            "live_mode": False,
-            "dmypy_status_file": str(statusFile),
-        }
-        if p == "pylsp_mypy"
-        else {},
+        lambda _, p: (
+            {
+                "dmypy": True,
+                "live_mode": False,
+                "dmypy_status_file": str(statusFile),
+            }
+            if p == "pylsp_mypy"
+            else {}
+        ),
     )
 
     document = Document(DOC_URI, workspace, DOC_TYPE_ERR)
