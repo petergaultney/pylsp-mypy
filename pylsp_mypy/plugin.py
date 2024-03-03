@@ -540,6 +540,82 @@ def findConfigFile(
     return None
 
 
+@hookimpl
+def pylsp_code_actions(
+    config: Config,
+    workspace: Workspace,
+    document: Document,
+    range: Dict,
+    context: Dict,
+) -> List[Dict]:
+    """
+    Provide code actions to ignore errors.
+
+    Parameters
+    ----------
+    config : pylsp.config.config.Config
+        Current config.
+    workspace : pylsp.workspace.Workspace
+        Current workspace.
+    document : pylsp.workspace.Document
+        Document to apply code actions on.
+    range : Dict
+        Range argument given by pylsp.
+    context : Dict
+        CodeActionContext given as dict.
+
+    Returns
+    -------
+      List of dicts containing the code actions.
+    """
+    actions = []
+    # Code actions based on diagnostics
+    for diagnostic in context.get("diagnostics", []):
+        if diagnostic["source"] != "mypy":
+            continue
+        code = diagnostic["code"]
+        lineNumberEnd = diagnostic["range"]["end"]["line"]
+        line = document.lines[lineNumberEnd]
+        endOfLine = len(line) - 1
+        start = {"line": lineNumberEnd, "character": endOfLine}
+        edit_range = {"start": start, "end": start}
+        edit = {"range": edit_range, "newText": f"  # type: ignore[{code}]"}
+
+        action = {
+            "title": f"# type: ignore[{code}]",
+            "kind": "quickfix",
+            "diagnostics": [diagnostic],
+            "edit": {"changes": {document.uri: [edit]}},
+        }
+        actions.append(action)
+    if context.get("diagnostics", []) != []:
+        return actions
+
+    # Code actions based on current selected range
+    for diagnostic in last_diagnostics[document.path]:
+        lineNumberStart = diagnostic["range"]["start"]["line"]
+        lineNumberEnd = diagnostic["range"]["end"]["line"]
+        rStart = range["start"]["line"]
+        rEnd = range["end"]["line"]
+        if (rStart <= lineNumberStart and rEnd >= lineNumberStart) or (
+            rStart <= lineNumberEnd and rEnd >= lineNumberEnd
+        ):
+            code = diagnostic["code"]
+            line = document.lines[lineNumberEnd]
+            endOfLine = len(line) - 1
+            start = {"line": lineNumberEnd, "character": endOfLine}
+            edit_range = {"start": start, "end": start}
+            edit = {"range": edit_range, "newText": f"  # type: ignore[{code}]"}
+            action = {
+                "title": f"# type: ignore[{code}]",
+                "kind": "quickfix",
+                "edit": {"changes": {document.uri: [edit]}},
+            }
+            actions.append(action)
+
+    return actions
+
+
 @atexit.register
 def close() -> None:
     """
