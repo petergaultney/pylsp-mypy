@@ -231,6 +231,7 @@ def test_option_overrides_dmypy(last_diagnostics_monkeypatch, workspace):
         "/tmp/fake",
         "--show-error-end",
         "--no-error-summary",
+        "--no-pretty",
         document.path,
     ]
     m.assert_called_with(expected, capture_output=True, **windows_flag, encoding="utf-8")
