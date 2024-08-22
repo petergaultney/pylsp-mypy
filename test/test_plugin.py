@@ -1,12 +1,14 @@
 import collections
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Dict
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
+from mypy import api as mypy_api
 from pylsp import _utils, uris
 from pylsp.config.config import Config
 from pylsp.workspace import Document, Workspace
@@ -17,7 +19,12 @@ from pylsp_mypy import plugin
 DOC_URI = f"file:/{Path(__file__)}"
 DOC_TYPE_ERR = """{}.append(3)
 """
-TYPE_ERR_MSG = '"Dict[<nothing>, <nothing>]" has no attribute "append"'
+
+# Mypy 1.7 changed <nothing> into "Never", so make this a regex to be compatible
+# with multiple versions of mypy
+TYPE_ERR_MSG_REGEX = (
+    r'"Dict\[(?:(?:<nothing>)|(?:Never)), (?:(?:<nothing>)|(?:Never))\]" has no attribute "append"'
+)
 
 TEST_LINE = 'test_plugin.py:279:8:279:16: error: "Request" has no attribute "id"  [attr-defined]'
 TEST_LINE_NOTE = (
@@ -65,7 +72,7 @@ def test_plugin(workspace, last_diagnostics_monkeypatch):
 
     assert len(diags) == 1
     diag = diags[0]
-    assert diag["message"] == TYPE_ERR_MSG
+    assert re.fullmatch(TYPE_ERR_MSG_REGEX, diag["message"])
     assert diag["range"]["start"] == {"line": 0, "character": 0}
     # Running mypy in 3.7 produces wrong error ends this can be removed when 3.7 reaches EOL
     if sys.version_info < (3, 8):
@@ -189,13 +196,15 @@ def test_option_overrides_dmypy(last_diagnostics_monkeypatch, workspace):
     last_diagnostics_monkeypatch.setattr(
         FakeConfig,
         "plugin_settings",
-        lambda _, p: {
-            "overrides": overrides,
-            "dmypy": True,
-            "live_mode": False,
-        }
-        if p == "pylsp_mypy"
-        else {},
+        lambda _, p: (
+            {
+                "overrides": overrides,
+                "dmypy": True,
+                "live_mode": False,
+            }
+            if p == "pylsp_mypy"
+            else {}
+        ),
     )
 
     m = Mock(wraps=lambda a, **_: Mock(returncode=0, **{"stdout": ""}))
@@ -222,6 +231,7 @@ def test_option_overrides_dmypy(last_diagnostics_monkeypatch, workspace):
         "/tmp/fake",
         "--show-error-end",
         "--no-error-summary",
+        "--no-pretty",
         document.path,
     ]
     m.assert_called_with(expected, capture_output=True, **windows_flag, encoding="utf-8")
@@ -233,13 +243,15 @@ def test_dmypy_status_file(tmpdir, last_diagnostics_monkeypatch, workspace):
     last_diagnostics_monkeypatch.setattr(
         FakeConfig,
         "plugin_settings",
-        lambda _, p: {
-            "dmypy": True,
-            "live_mode": False,
-            "dmypy_status_file": str(statusFile),
-        }
-        if p == "pylsp_mypy"
-        else {},
+        lambda _, p: (
+            {
+                "dmypy": True,
+                "live_mode": False,
+                "dmypy_status_file": str(statusFile),
+            }
+            if p == "pylsp_mypy"
+            else {}
+        ),
     )
 
     document = Document(DOC_URI, workspace, DOC_TYPE_ERR)
@@ -249,14 +261,17 @@ def test_dmypy_status_file(tmpdir, last_diagnostics_monkeypatch, workspace):
 
     assert not statusFile.exists()
 
-    plugin.pylsp_lint(
-        config=config,
-        workspace=workspace,
-        document=document,
-        is_saved=False,
-    )
+    try:
+        plugin.pylsp_lint(
+            config=config,
+            workspace=workspace,
+            document=document,
+            is_saved=False,
+        )
 
-    assert statusFile.exists()
+        assert statusFile.exists()
+    finally:
+        mypy_api.run_dmypy(["--status-file", str(statusFile), "stop"])
 
 
 def test_config_sub_paths(tmpdir, last_diagnostics_monkeypatch):
@@ -324,3 +339,47 @@ def foo():
     diag = diags[0]
     assert diag["message"] == DOC_ERR_MSG
     assert diag["code"] == "unreachable"
+
+
+@pytest.mark.parametrize(
+    "document_path,pattern,os_sep,pattern_matched",
+    (
+        ("/workspace/my-file.py", "/someting-else", "/", False),
+        ("/workspace/my-file.py", "^/workspace$", "/", False),
+        ("/workspace/my-file.py", "/workspace", "/", True),
+        ("/workspace/my-file.py", "^/workspace(.*)$", "/", True),
+        # This is a broken regex (missing ')'), but should not choke
+        ("/workspace/my-file.py", "/((workspace)", "/", False),
+        # Windows paths are tricky with all those \\ and unintended escape,
+        # characters but they should 'just' work
+        ("d:\\a\\my-file.py", "/a", "\\", True),
+        (
+            "d:\\a\\pylsp-mypy\\pylsp-mypy\\test\\test_plugin.py",
+            "/a/pylsp-mypy/pylsp-mypy/test/test_plugin.py",
+            "\\",
+            True,
+        ),
+    ),
+)
+def test_match_exclude_patterns(document_path, pattern, os_sep, pattern_matched):
+    with patch("os.sep", new=os_sep):
+        assert (
+            plugin.match_exclude_patterns(document_path=document_path, exclude_patterns=[pattern])
+            is pattern_matched
+        )
+
+
+def test_config_exclude(tmpdir, workspace):
+    """When exclude is set in config then mypy should not run for that file."""
+    doc = Document(DOC_URI, workspace, DOC_TYPE_ERR)
+
+    plugin.pylsp_settings(workspace._config)
+    workspace.update_config({"pylsp": {"plugins": {"pylsp_mypy": {}}}})
+    diags = plugin.pylsp_lint(workspace._config, workspace, doc, is_saved=False)
+    assert re.search(TYPE_ERR_MSG_REGEX, diags[0]["message"])
+
+    # Add the path of our document to the exclude patterns
+    exclude_path = doc.path.replace(os.sep, "/")
+    workspace.update_config({"pylsp": {"plugins": {"pylsp_mypy": {"exclude": [exclude_path]}}}})
+    diags = plugin.pylsp_lint(workspace._config, workspace, doc, is_saved=False)
+    assert diags == []

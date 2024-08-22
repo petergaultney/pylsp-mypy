@@ -23,29 +23,58 @@ Install into the same virtualenv as python-lsp-server itself.
 
 Configuration
 -------------
+``pylsp-mypy`` supports the use of ``pyproject.toml`` for configuration. It can also be configuered using configs provided to the LSP server. The configuration keys are listed in the following.
 
-``live_mode`` (default is True) provides type checking as you type.
-    This writes to a tempfile every time a check is done. Turning off ``live_mode`` means you must save your changes for mypy diagnostics to update correctly.
+.. list-table:: Configuration
+   :header-rows: 1
 
-``dmypy`` (default is False) executes via ``dmypy run`` rather than ``mypy``.
-    This uses the ``dmypy`` daemon and may dramatically improve the responsiveness of the ``pylsp`` server, however this currently does not work in ``live_mode``. Enabling this disables ``live_mode``, even for conflicting configs.
+   * - ``pyproject.toml`` key
+     - LSP Configuration Key
+     - Type
+     - Description
+     - Default
+   * - ``live_mode``
+     - ``pylsp.plugins.pylsp_mypy.live_mode``
+     - ``boolean``
+     - **Provides type checking as you type**. This writes to a tempfile every time a check is done. Turning off ``live_mode`` means you must save your changes for mypy diagnostics to update correctly.
+     - true
+   * - ``dmypy``
+     - ``pylsp.plugins.pylsp_mypy.dmypy``
+     - ``boolean``
+     - **Executes via** ``dmypy run`` **rather than** ``mypy``. This uses the ``dmypy`` daemon and may dramatically improve the responsiveness of the ``pylsp`` server, however this currently does not work in ``live_mode``. Enabling this disables ``live_mode``, even for conflicting configs.
+     - false
+   * - ``strict``
+     - ``pylsp.plugins.pylsp_mypy.strict``
+     - ``boolean``
+     - **Refers to the** ``strict`` **option of** ``mypy``. This option often is too strict to be useful.
+     - false
+   * - ``overrides``
+     - ``pylsp.plugins.pylsp_mypy.overrides``
+     - ``array`` of (``string`` items or ``true``)
+     - **A list of alternate or supplemental command-line options**. This modifies the options passed to ``mypy`` or the mypy-specific ones passed to ``dmypy run``. When present, the special boolean member ``true`` is replaced with the command-line options that would've been passed had ``overrides`` not been specified.
+     - ``[true]``
+   * - ``dmypy_status_file``
+     - ``pylsp.plugins.pylsp_mypy.dmypy_status_file``
+     - ``string``
+     - **Specifies which status file dmypy should use**. This modifies the ``--status-file`` option passed to ``dmypy`` given ``dmypy`` is active.
+     - ``.dmypy.json``
+   * - ``config_sub_paths``
+     - ``pylsp.plugins.pylsp_mypy.config_sub_paths``
+     - ``array`` of ``string`` items
+     - **Specifies sub paths under which the mypy configuration file may be found**. For each directory searched for the mypy config file, this also searches the sub paths specified here.
+     - ``[]``
+   * - ``report_progress``
+     - ``pylsp.plugins.pylsp_mypy.report_progress``
+     - ``boolean``
+     - **Report basic progress to the LSP client**. With this option, pylsp-mypy will report when mypy is running, given your editor supports LSP progress reporting. For small files this might produce annoying flashing in your editor, especially in ``live_mode``. For large projects, enabling this can be helpful to assure yourself whether mypy is still running.
+     - false
+   * - ``exclude``
+     - ``pylsp.plugins.pylsp_mypy.exclude``
+     - ``array`` of ``string`` items
+     - **A list of regular expressions which should be ignored**. The ``mypy`` runner wil not be invoked when a document path is matched by one of the expressions. Note that this differs from the ``exclude`` directive of a ``mypy`` config which is only used for recursively discovering files when mypy is invoked on a whole directory. For both windows or unix platforms you should use forward slashes (``/``) to indicate paths.
+     - ``[]``
 
-``strict`` (default is False) refers to the ``strict`` option of ``mypy``.
-    This option often is too strict to be useful.
-
-``overrides`` (default is ``[True]``) specifies a list of alternate or supplemental command-line options.
-    This modifies the options passed to ``mypy`` or the mypy-specific ones passed to ``dmypy run``. When present, the special boolean member ``True`` is replaced with the command-line options that would've been passed had ``overrides`` not been specified. Later options take precedence, which allows for replacing or negating individual default options (see ``mypy.main:process_options`` and ``mypy --help | grep inverse``).
-
-``dmypy_status_file`` (Default is ``.dmypy.json``) specifies which status file dmypy should use.
-    This modifies the ``--status-file`` option passed to ``dmypy`` given ``dmypy`` is active.
-
-``config_sub_paths`` (default is ``[]``) specifies sub paths under which the mypy configuration file may be found.
-    For each directory searched for the mypy config file, this also searches the sub paths specified here
-
-``report_progress`` (default is ``False``) report basic progress to the LSP client.
-    With this option, pylsp-mypy will report when mypy is running, given your editor supports LSP progress reporting. For small files this might produce annoying flashing in your editor, especially in with ``live_mode``. For large projects, enabling this can be helpful to assure yourself whether mypy is still running.
-
-This project supports the use of ``pyproject.toml`` for configuration. It is in fact the preferred way. Using that your configuration could look like this:
+Using a ``pyproject.toml`` for configuration, which is in fact the preferred way, your configuration could look like this:
 
 ::
 
@@ -53,8 +82,9 @@ This project supports the use of ``pyproject.toml`` for configuration. It is in 
     enabled = true
     live_mode = true
     strict = true
+    exclude = ["tests/*"]
 
-A ``pyproject.toml`` does not conflict with the legacy config file given that it does not contain a ``pylsp-mypy`` section. The following explanation uses the syntax of the legacy config file. However, all these options also apply to the ``pyproject.toml`` configuration (note the lowercase bools).
+A ``pyproject.toml`` does not conflict with the legacy config file (deprecated) given that it does not contain a ``pylsp-mypy`` section. The following explanation uses the syntax of the legacy config file (deprecated). However, all these options also apply to the ``pyproject.toml`` configuration (note the lowercase bools).
 Depending on your editor, the configuration (found in a file called pylsp-mypy.cfg in your workspace or a parent directory) should be roughly like this for a standard configuration:
 
 ::
@@ -62,7 +92,8 @@ Depending on your editor, the configuration (found in a file called pylsp-mypy.c
     {
         "enabled": True,
         "live_mode": True,
-        "strict": False
+        "strict": False,
+        "exclude": ["tests/*"]
     }
 
 With ``dmypy`` enabled your config should look like this:

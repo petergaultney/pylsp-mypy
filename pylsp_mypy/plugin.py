@@ -39,6 +39,13 @@ line_pattern = re.compile(
     )
 )
 
+whole_line_pattern = re.compile(  # certain mypy warnings do not report start-end ranges
+    (
+        r"^(?P<file>.+):(?P<start_line>\d+): "
+        r"(?P<severity>\w+): (?P<message>.+?)(?: +\[(?P<code>.+)\])?$"
+    )
+)
+
 log = logging.getLogger(__name__)
 
 # A mapping from workspace path to config file path
@@ -84,7 +91,8 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
         The dict with the lint data.
 
     """
-    result = line_pattern.match(line)
+    result = line_pattern.match(line) or whole_line_pattern.match(line)
+
     if not result:
         return None
 
@@ -97,9 +105,9 @@ def parse_line(line: str, document: Optional[Document] = None) -> Optional[Dict[
             return None
 
     lineno = int(result["start_line"]) - 1  # 0-based line number
-    offset = int(result["start_col"]) - 1  # 0-based offset
-    end_lineno = int(result["end_line"]) - 1
-    end_offset = int(result["end_col"])  # end is exclusive
+    offset = int(result.groupdict().get("start_col", 1)) - 1  # 0-based offset
+    end_lineno = int(result.groupdict().get("end_line", lineno + 1)) - 1
+    end_offset = int(result.groupdict().get("end_col", 1))  # end is exclusive
 
     severity = result["severity"]
     if severity not in ("error", "note"):
@@ -144,6 +152,21 @@ def didSettingsChange(workspace: str, settings: Dict[str, Any]) -> None:
         settingsCache[workspace] = settings.copy()
 
 
+def match_exclude_patterns(document_path: str, exclude_patterns: list) -> bool:
+    """Check if the current document path matches any of the configures exlude patterns."""
+    document_path = document_path.replace(os.sep, "/")
+
+    for pattern in exclude_patterns:
+        try:
+            if re.search(pattern, document_path):
+                log.debug(f"{document_path} matches " f"exclude pattern '{pattern}'")
+                return True
+        except re.error as e:
+            log.error(f"pattern {pattern} is not a valid regular expression: {e}")
+
+    return False
+
+
 @hookimpl
 def pylsp_lint(
     config: Config, workspace: Workspace, document: Document, is_saved: bool
@@ -182,6 +205,18 @@ def pylsp_lint(
             settings = oldSettings2
 
     didSettingsChange(workspace.root_path, settings)
+
+    # Running mypy with a single file (document) ignores any exclude pattern
+    # configured with mypy. We can now add our own exclude section like so:
+    # [tool.pylsp-mypy]
+    # exclude = ["tests/*"]
+    exclude_patterns = settings.get("exclude", [])
+
+    if match_exclude_patterns(document_path=document.path, exclude_patterns=exclude_patterns):
+        log.debug(
+            f"Not running because {document.path} matches " f"exclude patterns '{exclude_patterns}'"
+        )
+        return []
 
     if settings.get("report_progress", False):
         with workspace.report_progress("lint: mypy"):
@@ -250,7 +285,7 @@ def get_diagnostics(
     if dmypy:
         dmypy_status_file = settings.get("dmypy_status_file", ".dmypy.json")
 
-    args = ["--show-error-end", "--no-error-summary"]
+    args = ["--show-error-end", "--no-error-summary", "--no-pretty"]
 
     global tmpFile
     if live_mode and not is_saved:
@@ -525,6 +560,82 @@ def findConfigFile(
             if Path(path).expanduser().exists():
                 return str(Path(path).expanduser())
     return None
+
+
+@hookimpl
+def pylsp_code_actions(
+    config: Config,
+    workspace: Workspace,
+    document: Document,
+    range: Dict,
+    context: Dict,
+) -> List[Dict]:
+    """
+    Provide code actions to ignore errors.
+
+    Parameters
+    ----------
+    config : pylsp.config.config.Config
+        Current config.
+    workspace : pylsp.workspace.Workspace
+        Current workspace.
+    document : pylsp.workspace.Document
+        Document to apply code actions on.
+    range : Dict
+        Range argument given by pylsp.
+    context : Dict
+        CodeActionContext given as dict.
+
+    Returns
+    -------
+      List of dicts containing the code actions.
+    """
+    actions = []
+    # Code actions based on diagnostics
+    for diagnostic in context.get("diagnostics", []):
+        if diagnostic["source"] != "mypy":
+            continue
+        code = diagnostic["code"]
+        lineNumberEnd = diagnostic["range"]["end"]["line"]
+        line = document.lines[lineNumberEnd]
+        endOfLine = len(line) - 1
+        start = {"line": lineNumberEnd, "character": endOfLine}
+        edit_range = {"start": start, "end": start}
+        edit = {"range": edit_range, "newText": f"  # type: ignore[{code}]"}
+
+        action = {
+            "title": f"# type: ignore[{code}]",
+            "kind": "quickfix",
+            "diagnostics": [diagnostic],
+            "edit": {"changes": {document.uri: [edit]}},
+        }
+        actions.append(action)
+    if context.get("diagnostics", []) != []:
+        return actions
+
+    # Code actions based on current selected range
+    for diagnostic in last_diagnostics[document.path]:
+        lineNumberStart = diagnostic["range"]["start"]["line"]
+        lineNumberEnd = diagnostic["range"]["end"]["line"]
+        rStart = range["start"]["line"]
+        rEnd = range["end"]["line"]
+        if (rStart <= lineNumberStart and rEnd >= lineNumberStart) or (
+            rStart <= lineNumberEnd and rEnd >= lineNumberEnd
+        ):
+            code = diagnostic["code"]
+            line = document.lines[lineNumberEnd]
+            endOfLine = len(line) - 1
+            start = {"line": lineNumberEnd, "character": endOfLine}
+            edit_range = {"start": start, "end": start}
+            edit = {"range": edit_range, "newText": f"  # type: ignore[{code}]"}
+            action = {
+                "title": f"# type: ignore[{code}]",
+                "kind": "quickfix",
+                "edit": {"changes": {document.uri: [edit]}},
+            }
+            actions.append(action)
+
+    return actions
 
 
 @atexit.register
